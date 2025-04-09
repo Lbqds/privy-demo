@@ -83,12 +83,13 @@ export class PrivyAlephiumProvider extends SignerProvider {
       }))
     })
     if (buildResults.length === 0) throw new Error('Not enough balance')
-    if (buildResults.length > 1) throw new Error('Not supported')
-    const buildResult = buildResults[0]!
-    const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
-    const result = { ...buildResult, signature: binToHex(signature) }
-    await this.nodeProvider.transactions.postTransactionsSubmit(result)
-    return result
+    let signedTx: SignTransferTxResult
+    for (const buildResult of buildResults) {
+      const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
+      signedTx = { ...buildResult, signature: binToHex(signature) }
+      await this.nodeProvider.transactions.postTransactionsSubmit(signedTx)
+    }
+    return signedTx!
   }
 
   async signAndSubmitDeployContractTx(params: SignDeployContractTxParams): Promise<SignDeployContractTxResult> {
@@ -102,7 +103,11 @@ export class PrivyAlephiumProvider extends SignerProvider {
       issueTokenTo: params.issueTokenTo,
       gasPrice: params.gasPrice?.toString(),
     })
-    if (buildResult.transferTxs.length !== 0) throw new Error('Not supported')
+    for (const transferTx of buildResult.transferTxs) {
+      const signature = await account.signMessage(hexToBinUnsafe(transferTx.txId))
+      const signedTx = { ...transferTx, signature: binToHex(signature) }
+      await this.nodeProvider.transactions.postTransactionsSubmit(signedTx)
+    }
     const signature = await account.signMessage(hexToBinUnsafe(buildResult.deployContractTx.txId))
     const result = { ...buildResult.deployContractTx, signature: binToHex(signature) }
     await this.nodeProvider.transactions.postTransactionsSubmit(result)
@@ -119,7 +124,11 @@ export class PrivyAlephiumProvider extends SignerProvider {
       gasPrice: params.gasPrice?.toString(),
       gasEstimationMultiplier: params.gasEstimationMultiplier
     })
-    if (buildResult.transferTxs.length !== 0) throw new Error('Not supported')
+    for (const transferTx of buildResult.transferTxs) {
+      const signature = await account.signMessage(hexToBinUnsafe(transferTx.txId))
+      const signedTx = { ...transferTx, signature: binToHex(signature) }
+      await this.nodeProvider.transactions.postTransactionsSubmit(signedTx)
+    }
     const signature = await account.signMessage(hexToBinUnsafe(buildResult.executeScriptTx.txId))
     const result = { ...buildResult.executeScriptTx, signature: binToHex(signature) }
     await this.nodeProvider.transactions.postTransactionsSubmit(result)
