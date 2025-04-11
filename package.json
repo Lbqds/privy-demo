@@ -12,7 +12,7 @@
     "lint": "next lint && npx prettier --check \"{__tests__,components,pages,styles}/**/*.{ts,tsx,js,jsx}\" && npx tsc --noEmit"
   },
   "dependencies": {
-    "@alephium/web3": "^1.11.6",
+    "@alephium/web3": "^1.12.0-beta.0",
     "@headlessui/react": "^1.7.3",
     "@heroicons/react": "^2.0.12",
     "@privy-io/react-auth": "2.4.5",
