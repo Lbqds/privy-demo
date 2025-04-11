@@ -1,10 +1,10 @@
 import { useRouter } from "next/router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePrivy, User } from "@privy-io/react-auth";
 import { useSolanaWallets } from '@privy-io/react-auth/solana';
 import Head from "next/head";
 import { getAlphAddressFromSolAddress, PrivyAlephiumProvider } from "./provider";
-import { convertAlphAmountWithDecimals, DUST_AMOUNT, NodeProvider, ONE_ALPH, publicKeyFromPrivateKey, sign as signRaw, stringToHex } from "@alephium/web3";
+import { convertAlphAmountWithDecimals, DUST_AMOUNT, NodeProvider, ONE_ALPH, prettifyAttoAlphAmount, publicKeyFromPrivateKey, sign as signRaw, stringToHex } from "@alephium/web3";
 import { TokenFaucet, Withdraw } from "../artifacts/ts";
 
 const nodeProvider = new NodeProvider('http://127.0.0.1:22973')
@@ -14,19 +14,42 @@ export default function DashboardPage() {
   const { ready, authenticated, user, logout } = usePrivy();
   const [isUserObjectExpanded, setIsUserObjectExpanded] = useState(false);
   const solanaWallets = useSolanaWallets();
-  const provider = new PrivyAlephiumProvider(solanaWallets.wallets, nodeProvider, undefined)
+  const provider = useMemo(() => {
+    if (solanaWallets.ready && solanaWallets.wallets.length !== 0) {
+      return new PrivyAlephiumProvider(solanaWallets.wallets, nodeProvider, undefined)
+    } else {
+      return undefined
+    }
+  }, [solanaWallets])
 
   const [transferTo, setTransferTo] = useState<string>('')
   const [transferAmount, setTransferAmount] = useState<string>('')
 
   const [tokenId, setTokenId] = useState<string>('')
-  const [txId, setTxId] = useState<string>('')
+
+  const [alphBalance, setAlphBalance] = useState<string | undefined>(undefined)
+  const [tokenBalance, setTokenBalance] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     if (ready && !authenticated) {
       router.push("/");
     }
   }, [ready, authenticated, router]);
+
+  const updateBalance = useCallback(async () => {
+    if (provider) {
+      const account = await provider.getSelectedAccount()
+      const balances = await nodeProvider.addresses.getAddressesAddressBalance(account.address)
+      setAlphBalance(prettifyAttoAlphAmount(balances.balance))
+
+      if (tokenId !== undefined) {
+        const token = balances.tokenBalances?.find((t) => t.id === tokenId)
+        if (token !== undefined) {
+          setTokenBalance(token.amount)
+        }
+      }
+    }
+  }, [provider, tokenId, setAlphBalance, setTokenBalance])
 
   return (
     <>
@@ -92,14 +115,14 @@ export default function DashboardPage() {
               <div className="max-w-md">
                 <button
                   onClick={async () => {
-                    if (transferTo && transferAmount) {
-                      const account = await provider.unsafeGetSelectedAccount();
-                      await transferFromDevGenesis(account.address);
+                    if (transferTo && transferAmount && provider) {
+                      const account = await provider.getSelectedAccount()
+                      await transferFromDevGenesis(account.address)
                       const result = await provider.signAndSubmitTransferTx({
                         signerAddress: account.address,
                         destinations: [{ address: transferTo, attoAlphAmount: convertAlphAmountWithDecimals(transferAmount)! }]
                       })
-                      setTxId(result.txId)
+                      await updateBalance()
                       console.log(`from address: ${account.address}, ${account.group}, ${account.publicKey}`)
                       console.log(`tx id: ${result.txId}`)
                     }
@@ -111,50 +134,64 @@ export default function DashboardPage() {
 
                 <button
                   onClick={async () => {
-                    const account = await provider.unsafeGetSelectedAccount()
-                    await transferFromDevGenesis(account.address)
-                    const issueTokenAmount = 100n
-                    const result = await TokenFaucet.deploy(provider, {
-                      initialFields: {
-                        symbol: stringToHex('TF'),
-                        name: stringToHex('TokenFaucet'),
-                        decimals: 18n,
-                        supply: issueTokenAmount,
-                        balance: issueTokenAmount
-                      },
-                      issueTokenAmount
-                    })
-                    setTokenId(result.contractInstance.contractId)
-                    setTxId(result.txId)
-                    console.log(`contract address: ${result.contractInstance.address}`)
-                    console.log(`token id: ${result.contractInstance.contractId}`)
+                    if (provider) {
+                      const account = await provider.getSelectedAccount()
+                      await transferFromDevGenesis(account.address)
+                      const issueTokenAmount = 100n
+                      const result = await TokenFaucet.deploy(provider, {
+                        initialFields: {
+                          symbol: stringToHex('TF'),
+                          name: stringToHex('TokenFaucet'),
+                          decimals: 18n,
+                          supply: issueTokenAmount,
+                          balance: issueTokenAmount
+                        },
+                        issueTokenAmount
+                      })
+                      setTokenId(result.contractInstance.contractId)
+                      await updateBalance()
+                      console.log(`contract address: ${result.contractInstance.address}`)
+                      console.log(`token id: ${result.contractInstance.contractId}`)
+                    }
                   }}
-                  className="mt-10 w-full bg-violet-500 hover:bg-violet-800 text-white py-2 px-4 rounded-md text-sm font-medium transition-colors"
+                  disabled={tokenId !== ''}
+                  className="mt-10 w-full bg-violet-500 hover:bg-violet-800 text-white py-2 px-4 rounded-md text-sm font-medium transition-colors disabled:hover:bg-violet-500 disabled:cursor-not-allowed"
                 >
                   Create Token
                 </button>
 
+                <div className="inline-flex items-center mt-2">
+                  {tokenId !== '' ? (<span>Token ID: {tokenId}</span>) : (<></>)}
+                </div>
+
                 <button
                   onClick={async () => {
-                    const result = await Withdraw.execute(provider, {
-                      initialFields: {
-                        token: tokenId,
-                        amount: 1n
-                      },
-                      attoAlphAmount: DUST_AMOUNT,
-                    })
-                    setTxId(result.txId)
-                    console.log(`tx id: ${result.txId}`)
+                    if (provider) {
+                      const result = await Withdraw.execute(provider, {
+                        initialFields: {
+                          token: tokenId,
+                          amount: 1n
+                        },
+                        attoAlphAmount: DUST_AMOUNT,
+                      })
+                      await updateBalance()
+                      console.log(`tx id: ${result.txId}`)
+                    }
                   }}
                   disabled={tokenId === ''}
-                  className="mt-10 w-full bg-violet-500 hover:bg-violet-800 text-white py-2 px-4 rounded-md text-sm font-medium transition-colors disabled:hover:bg-violet-500 disabled:cursor-not-allowed"
+                  className="mt-4 w-full bg-violet-500 hover:bg-violet-800 text-white py-2 px-4 rounded-md text-sm font-medium transition-colors disabled:hover:bg-violet-500 disabled:cursor-not-allowed"
                 >
                   Mint Token
                 </button>
 
-                <div className="inline-flex items-center mt-8">
-                  {txId !== '' ? (<span>{txId}</span>) : (<></>)}
+                <div className="items-center mt-4">
+                  {alphBalance ? (<span>ALPH: {alphBalance}</span>) : (<></>)}
                 </div>
+
+                <div className="items-center mt-2">
+                  {tokenBalance ? (<span>Token: {tokenBalance}</span>) : (<></>)}
+                </div>
+
               </div>
             </div>
           </>
