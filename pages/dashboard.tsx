@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePrivy, User } from "@privy-io/react-auth";
 import { useSolanaWallets } from '@privy-io/react-auth/solana';
 import Head from "next/head";
-import { getAlphAddressFromSolAddress, PrivyAlephiumProvider } from "./provider";
+import { getAlphAddressFromSolAddress, PrivyAlephiumProvider } from "../utils/privyProvider";
 import { convertAlphAmountWithDecimals, DUST_AMOUNT, NodeProvider, ONE_ALPH, prettifyAttoAlphAmount, publicKeyFromPrivateKey, sign as signRaw, stringToHex } from "@alephium/web3";
 import { TokenFaucet, Withdraw } from "../artifacts/ts";
 
