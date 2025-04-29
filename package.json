@@ -20,10 +20,14 @@
     "@tailwindcss/forms": "^0.5.3",
     "next": "latest",
     "react": "18.2.0",
-    "react-dom": "18.2.0"
+    "react-dom": "18.2.0",
+    "@peculiar/asn1-ecc": "^2.3.14",
+    "@peculiar/asn1-schema": "^2.3.13",
+    "cbor2": "^1.8.0"
   },
   "devDependencies": {
     "@tsconfig/next": "^2.0.0",
+    "@types/elliptic": "^6.4.18",
     "@tsconfig/node18": "^18.2.0",
     "@tsconfig/strictest": "^2.0.1",
     "@types/node": "^18",
