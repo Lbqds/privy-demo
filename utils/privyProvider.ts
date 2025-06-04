@@ -16,14 +16,13 @@ import {
   SignMessageParams,
   SignMessageResult,
   bs58,
-  concatBytes,
-  codec,
   TOTAL_NUMBER_OF_GROUPS,
   binToHex,
   hexToBinUnsafe,
   toApiTokens,
   contractIdFromAddress,
-  TransactionBuilder
+  TransactionBuilder,
+  addressFromPublicKey
 } from "@alephium/web3";
 
 interface PrivySolanaWallet {
@@ -38,7 +37,8 @@ export class PrivyAlephiumProvider extends SignerProvider {
   constructor(
     connectedWallets: PrivySolanaWallet[],
     readonly nodeProvider: NodeProvider,
-    readonly explorerProvider: ExplorerProvider | undefined
+    readonly explorerProvider: ExplorerProvider | undefined,
+    readonly txBuilder: TransactionBuilder = TransactionBuilder.from(nodeProvider)
   ) {
     super();
     this.accounts = connectedWallets.map((wallet) => {
@@ -46,7 +46,7 @@ export class PrivyAlephiumProvider extends SignerProvider {
       return {
         ...wallet,
         address: getAlphAddress(publicKey),
-        keyType: 'default', // FIXME: ed25519
+        keyType: 'gl-ed25519',
         group: getGroup(publicKey),
         publicKey: binToHex(publicKey)
       }
@@ -73,64 +73,77 @@ export class PrivyAlephiumProvider extends SignerProvider {
     return account
   }
 
+  private async _signAndSubmitTransferTx(account: Account & PrivySolanaWallet, buildResult: Omit<SignTransferTxResult, 'signature'>) {
+    const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
+    const signedTx = { ...buildResult, signature: binToHex(signature) }
+    await this.nodeProvider.transactions.postTransactionsSubmit(signedTx)
+    return signedTx
+  }
+
+  private async signAndSubmitTransferTxs(account: Account & PrivySolanaWallet, buildResults: Omit<SignTransferTxResult, 'signature'>[]) {
+    const results: SignTransferTxResult[] = []
+    for (const buildResult of buildResults) {
+      const result = await this._signAndSubmitTransferTx(account, buildResult)
+      results.push(result)
+    }
+    return results
+  }
+
   async signAndSubmitTransferTx(params: SignTransferTxParams): Promise<SignTransferTxResult> {
     const account = await this.getAccountByAddress(params.signerAddress)
-    const buildResults = await this.nodeProvider.groupless.postGrouplessTransfer({
-      fromAddress: account.address,
+    const buildResult = await this.txBuilder.buildTransferTx({
+      signerAddress: account.address,
+      signerKeyType: 'gl-ed25519',
       destinations: params.destinations.map((d) => ({
         address: d.address,
         attoAlphAmount: d.attoAlphAmount.toString()
       }))
-    })
-    if (buildResults.length === 0) throw new Error('Not enough balance')
-    let signedTx: SignTransferTxResult
-    for (const buildResult of buildResults) {
-      const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
-      signedTx = { ...buildResult, signature: binToHex(signature) }
-      await this.nodeProvider.transactions.postTransactionsSubmit(signedTx)
+    }, account.publicKey)
+    if ('transferTxs' in buildResult) {
+      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
     }
-    return signedTx!
+    return this._signAndSubmitTransferTx(account, buildResult)
   }
 
   async signAndSubmitDeployContractTx(params: SignDeployContractTxParams): Promise<SignDeployContractTxResult> {
     const account = await this.getAccountByAddress(params.signerAddress)
-    const buildResult = await this.nodeProvider.groupless.postGrouplessDeployContract({
-      fromAddress: account.address,
+    const buildResult = await this.txBuilder.buildDeployContractTx({
+      signerAddress: account.address,
+      signerKeyType: 'gl-ed25519',
       bytecode: params.bytecode,
       initialAttoAlphAmount: params.initialAttoAlphAmount?.toString(),
       initialTokenAmounts: toApiTokens(params.initialTokenAmounts),
       issueTokenAmount: params.issueTokenAmount?.toString(),
       issueTokenTo: params.issueTokenTo,
       gasPrice: params.gasPrice?.toString(),
-    })
-    for (const transferTx of buildResult.transferTxs) {
-      const signature = await account.signMessage(hexToBinUnsafe(transferTx.txId))
-      const signedTx = { ...transferTx, signature: binToHex(signature) }
-      await this.nodeProvider.transactions.postTransactionsSubmit(signedTx)
+      group: account.group
+    }, account.publicKey)
+    if ('transferTxs' in buildResult) {
+      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
     }
-    const signature = await account.signMessage(hexToBinUnsafe(buildResult.deployContractTx.txId))
-    const result = { ...buildResult.deployContractTx, signature: binToHex(signature) }
+    const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
+    const result = { ...buildResult, signature: binToHex(signature) }
     await this.nodeProvider.transactions.postTransactionsSubmit(result)
     return { ...result, groupIndex: account.group, contractId: binToHex(contractIdFromAddress(result.contractAddress)) }
   }
 
   async signAndSubmitExecuteScriptTx(params: SignExecuteScriptTxParams): Promise<SignExecuteScriptTxResult> {
     const account = await this.getAccountByAddress(params.signerAddress)
-    const buildResult = await this.nodeProvider.groupless.postGrouplessExecuteScript({
-      fromAddress: account.address,
+    const buildResult = await this.txBuilder.buildExecuteScriptTx({
+      signerAddress: account.address,
+      signerKeyType: 'gl-ed25519',
       bytecode: params.bytecode,
       attoAlphAmount: params.attoAlphAmount?.toString(),
       tokens: toApiTokens(params.tokens),
       gasPrice: params.gasPrice?.toString(),
+      group: account.group,
       gasEstimationMultiplier: params.gasEstimationMultiplier
-    })
-    for (const transferTx of buildResult.transferTxs) {
-      const signature = await account.signMessage(hexToBinUnsafe(transferTx.txId))
-      const signedTx = { ...transferTx, signature: binToHex(signature) }
-      await this.nodeProvider.transactions.postTransactionsSubmit(signedTx)
+    }, account.publicKey)
+    if ('transferTxs' in buildResult) {
+      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
     }
-    const signature = await account.signMessage(hexToBinUnsafe(buildResult.executeScriptTx.txId))
-    const result = { ...buildResult.executeScriptTx, signature: binToHex(signature) }
+    const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
+    const result = { ...buildResult, signature: binToHex(signature) }
     await this.nodeProvider.transactions.postTransactionsSubmit(result)
     return { ...result, groupIndex: account.group }
   }
@@ -160,28 +173,13 @@ export class PrivyAlephiumProvider extends SignerProvider {
   }
 }
 
-function djb2(bytes: Uint8Array): number {
-  let hash = 5381
-  for (let i = 0; i < bytes.length; i++) {
-    hash = (hash << 5) + hash + (bytes[`${i}`]! & 0xff)
-  }
-  return hash
-}
-
 export function getAlphAddressFromSolAddress(solAddress: string): string {
   return getAlphAddress(bs58.decode(solAddress))
 }
 
 function getAlphAddress(publicKey: Uint8Array): string {
-  const encodedPublicKey = concatBytes([new Uint8Array([2]), publicKey])
-  const checksum = djb2(encodedPublicKey)
-  const bytes = concatBytes([
-    new Uint8Array([4]),
-    encodedPublicKey,
-    codec.intAs4BytesCodec.encode(checksum),
-  ])
-  const group = getGroup(publicKey)
-  return `${bs58.encode(bytes)}:${group}`
+  const publicKeyHex = binToHex(publicKey)
+  return addressFromPublicKey(publicKeyHex, 'gl-ed25519')
 }
 
 function getGroup(publicKey: Uint8Array): number {

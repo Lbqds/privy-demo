@@ -167,7 +167,8 @@ export default function DashboardPage() {
                 <button
                   onClick={async () => {
                     if (provider) {
-                      const result = await Withdraw.execute(provider, {
+                      const result = await Withdraw.execute({
+                        signer: provider,
                         initialFields: {
                           token: tokenId,
                           amount: 1n

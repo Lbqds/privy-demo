@@ -2,7 +2,6 @@ import {
   binToHex,
   concatBytes,
   codec,
-  bs58,
   HexString,
   hexToBinUnsafe,
   SignerProvider,
@@ -24,8 +23,8 @@ import {
   SignMessageParams,
   SignMessageResult,
   TransactionBuilder,
-  node,
-  defaultGroupOfGrouplessAddress
+  defaultGroupOfGrouplessAddress,
+  addressFromPublicKey
 } from '@alephium/web3'
 import { decode as cborDecode } from 'cbor2'
 import * as elliptic from 'elliptic'
@@ -41,7 +40,8 @@ export class PasskeyAlephiumProvider extends SignerProvider {
   constructor(
     readonly account: PasskeyAccount,
     readonly nodeProvider: NodeProvider,
-    readonly explorerProvider: ExplorerProvider | undefined
+    readonly explorerProvider: ExplorerProvider | undefined,
+    readonly txBuilder: TransactionBuilder = TransactionBuilder.from(nodeProvider)
   ) {
     super();
   }
@@ -62,76 +62,89 @@ export class PasskeyAlephiumProvider extends SignerProvider {
     return account
   }
 
-  private async signAndSubmitTransferTxs(account: PasskeyAccount, buildResults: node.BuildTransferTxResult[]) {
+  private async _signAndSubmitTransferTx(account: PasskeyAccount, buildResult: Omit<SignTransferTxResult, 'signature'>) {
+    const signatures = await sign(account, buildResult.txId)
+    await this.nodeProvider.multisig.postMultisigSubmit({
+      unsignedTx: buildResult.unsignedTx,
+      signatures: signatures
+    })
+    return { ...buildResult, signature: signatures.join('') }
+  }
+
+  private async signAndSubmitTransferTxs(account: PasskeyAccount, buildResults: Omit<SignTransferTxResult, 'signature'>[]) {
     const results: SignTransferTxResult[] = []
     for (const buildResult of buildResults) {
-      const signatures = await sign(account, buildResult.txId)
-      await this.nodeProvider.multisig.postMultisigSubmit({
-        unsignedTx: buildResult.unsignedTx,
-        signatures: signatures
-      })
-      results.push({ ...buildResult, signature: signatures.join('') })
+      const result = await this._signAndSubmitTransferTx(account, buildResult)
+      results.push(result)
     }
     return results
   }
 
   async signAndSubmitTransferTx(params: SignTransferTxParams): Promise<SignTransferTxResult> {
     const account = await this.getAccountByAddress(params.signerAddress)
-    const buildResults = await this.nodeProvider.groupless.postGrouplessTransfer({
-      fromAddress: account.address,
+    const buildResult = await this.txBuilder.buildTransferTx({
+      signerAddress: account.address,
+      signerKeyType: 'gl-webauthn',
       destinations: params.destinations.map((d) => ({
         address: d.address,
         attoAlphAmount: d.attoAlphAmount.toString()
       }))
-    })
-    if (buildResults.length === 0) throw new Error('Not enough balance')
-    const results = await this.signAndSubmitTransferTxs(account, buildResults)
-    return results[results.length - 1]!
+    }, account.publicKey)
+    if ('transferTxs' in buildResult) {
+      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    }
+    return await this._signAndSubmitTransferTx(account, buildResult)
   }
 
   async signAndSubmitDeployContractTx(params: SignDeployContractTxParams): Promise<SignDeployContractTxResult> {
     const account = await this.getAccountByAddress(params.signerAddress)
-    const buildResult = await this.nodeProvider.groupless.postGrouplessDeployContract({
-      fromAddress: account.address,
+    const buildResult = await this.txBuilder.buildDeployContractTx({
+      signerAddress: account.address,
+      signerKeyType: 'gl-webauthn',
       bytecode: params.bytecode,
       initialAttoAlphAmount: params.initialAttoAlphAmount?.toString(),
       initialTokenAmounts: toApiTokens(params.initialTokenAmounts),
       issueTokenAmount: params.issueTokenAmount?.toString(),
       issueTokenTo: params.issueTokenTo,
       gasPrice: params.gasPrice?.toString(),
-    })
-    await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
-    const signatures = await sign(account, buildResult.deployContractTx.txId)
+    }, account.publicKey)
+    if ('transferTxs' in buildResult) {
+      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    }
+    const signatures = await sign(account, buildResult.txId)
     await this.nodeProvider.multisig.postMultisigSubmit({
-      unsignedTx: buildResult.deployContractTx.unsignedTx,
+      unsignedTx: buildResult.unsignedTx,
       signatures: signatures
     })
     return {
-      ...buildResult.deployContractTx,
+      ...buildResult,
       signature: signatures.join(''),
       groupIndex: account.group,
-      contractId: binToHex(contractIdFromAddress(buildResult.deployContractTx.contractAddress))
+      contractId: binToHex(contractIdFromAddress(buildResult.contractAddress))
     }
   }
 
   async signAndSubmitExecuteScriptTx(params: SignExecuteScriptTxParams): Promise<SignExecuteScriptTxResult> {
     const account = await this.getAccountByAddress(params.signerAddress)
-    const buildResult = await this.nodeProvider.groupless.postGrouplessExecuteScript({
-      fromAddress: account.address,
+    const buildResult = await this.txBuilder.buildExecuteScriptTx({
+      signerAddress: account.address,
+      signerKeyType: 'gl-webauthn',
       bytecode: params.bytecode,
       attoAlphAmount: params.attoAlphAmount?.toString(),
       tokens: toApiTokens(params.tokens),
       gasPrice: params.gasPrice?.toString(),
       gasEstimationMultiplier: params.gasEstimationMultiplier
-    })
-    await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
-    const signatures = await sign(account, buildResult.executeScriptTx.txId)
+    }, account.publicKey)
+    if ('transferTxs' in buildResult) {
+      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    }
+    const signatures = await sign(account, buildResult.txId)
     await this.nodeProvider.multisig.postMultisigSubmit({
-      unsignedTx: buildResult.executeScriptTx.unsignedTx,
+      unsignedTx: buildResult.unsignedTx,
       signatures: signatures
     })
     return {
-      ...buildResult.executeScriptTx,
+      ...buildResult,
       signature: signatures.join(''),
       groupIndex: account.group
     }
@@ -179,27 +192,12 @@ function getWallet(name: string): PasskeyAccount {
   return JSON.parse(value)
 }
 
-function djb2(bytes: Uint8Array): number {
-  let hash = 5381
-  for (let i = 0; i < bytes.length; i++) {
-    hash = (hash << 5) + hash + (bytes[`${i}`]! & 0xff)
-  }
-  return hash
-}
-
 export function getWalletAddress(name: string): string {
   return encodePasskeyToBase58(hexToBinUnsafe(getWallet(name).publicKey))
 }
 
 function encodePasskeyToBase58(publicKey: Uint8Array): string {
-  const encodedPublicKey = concatBytes([new Uint8Array([3]), publicKey])
-  const checksum = djb2(encodedPublicKey)
-  const bytes = concatBytes([
-    new Uint8Array([4]),
-    encodedPublicKey,
-    codec.intAs4BytesCodec.encode(checksum),
-  ])
-  return bs58.encode(bytes)
+  return addressFromPublicKey(binToHex(publicKey), 'gl-webauthn')
 }
 
 async function sign(account: PasskeyAccount, txId: HexString) {
@@ -312,7 +310,7 @@ export async function createPasskeyAccount(walletName: string) {
     address,
     publicKey: binToHex(publicKey),
     rawId: binToHex(new Uint8Array(credential.rawId)),
-    keyType: 'default', // FIXME: passkey
+    keyType: 'gl-webauthn',
     group: defaultGroupOfGrouplessAddress(publicKey)
   }
   storeWallet(walletName, account)
