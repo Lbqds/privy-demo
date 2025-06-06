@@ -123,7 +123,7 @@ export default function DashboardPage() {
                         destinations: [{ address: transferTo, attoAlphAmount: convertAlphAmountWithDecimals(transferAmount)! }]
                       })
                       await updateBalance()
-                      console.log(`from address: ${account.address}, ${account.group}, ${account.publicKey}`)
+                      console.log(`from address: ${account.address}, ${account.publicKey}`)
                       console.log(`tx id: ${result.txId}`)
                     }
                   }}

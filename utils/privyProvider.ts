@@ -22,7 +22,8 @@ import {
   toApiTokens,
   contractIdFromAddress,
   TransactionBuilder,
-  addressFromPublicKey
+  addressFromPublicKey,
+  groupOfAddress
 } from "@alephium/web3";
 
 interface PrivySolanaWallet {
@@ -99,8 +100,8 @@ export class PrivyAlephiumProvider extends SignerProvider {
         attoAlphAmount: d.attoAlphAmount.toString()
       }))
     }, account.publicKey)
-    if ('transferTxs' in buildResult) {
-      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    if ('fundingTxs' in buildResult && buildResult.fundingTxs !== undefined) {
+      await this.signAndSubmitTransferTxs(account, buildResult.fundingTxs)
     }
     return this._signAndSubmitTransferTx(account, buildResult)
   }
@@ -116,15 +117,15 @@ export class PrivyAlephiumProvider extends SignerProvider {
       issueTokenAmount: params.issueTokenAmount?.toString(),
       issueTokenTo: params.issueTokenTo,
       gasPrice: params.gasPrice?.toString(),
-      group: account.group
+      group: params.group ?? groupOfAddress(account.address)
     }, account.publicKey)
-    if ('transferTxs' in buildResult) {
-      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    if ('fundingTxs' in buildResult && buildResult.fundingTxs !== undefined) {
+      await this.signAndSubmitTransferTxs(account, buildResult.fundingTxs)
     }
     const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
     const result = { ...buildResult, signature: binToHex(signature) }
     await this.nodeProvider.transactions.postTransactionsSubmit(result)
-    return { ...result, groupIndex: account.group, contractId: binToHex(contractIdFromAddress(result.contractAddress)) }
+    return { ...result, contractId: binToHex(contractIdFromAddress(result.contractAddress)) }
   }
 
   async signAndSubmitExecuteScriptTx(params: SignExecuteScriptTxParams): Promise<SignExecuteScriptTxResult> {
@@ -136,16 +137,16 @@ export class PrivyAlephiumProvider extends SignerProvider {
       attoAlphAmount: params.attoAlphAmount?.toString(),
       tokens: toApiTokens(params.tokens),
       gasPrice: params.gasPrice?.toString(),
-      group: account.group,
+      group: params.group ?? groupOfAddress(account.address),
       gasEstimationMultiplier: params.gasEstimationMultiplier
     }, account.publicKey)
-    if ('transferTxs' in buildResult) {
-      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    if ('fundingTxs' in buildResult && buildResult.fundingTxs !== undefined) {
+      await this.signAndSubmitTransferTxs(account, buildResult.fundingTxs)
     }
     const signature = await account.signMessage(hexToBinUnsafe(buildResult.txId))
     const result = { ...buildResult, signature: binToHex(signature) }
     await this.nodeProvider.transactions.postTransactionsSubmit(result)
-    return { ...result, groupIndex: account.group }
+    return result
   }
 
   async signAndSubmitUnsignedTx(params: SignUnsignedTxParams): Promise<SignUnsignedTxResult> {

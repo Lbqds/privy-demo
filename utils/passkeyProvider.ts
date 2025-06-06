@@ -23,8 +23,8 @@ import {
   SignMessageParams,
   SignMessageResult,
   TransactionBuilder,
-  defaultGroupOfGrouplessAddress,
-  addressFromPublicKey
+  addressFromPublicKey,
+  GrouplessAccount
 } from '@alephium/web3'
 import { decode as cborDecode } from 'cbor2'
 import * as elliptic from 'elliptic'
@@ -32,7 +32,7 @@ import { AsnParser } from '@peculiar/asn1-schema'
 import { ECDSASigValue } from '@peculiar/asn1-ecc'
 import * as BN from 'bn.js'
 
-export interface PasskeyAccount extends Account {
+export interface PasskeyAccount extends GrouplessAccount {
   rawId: HexString
 }
 
@@ -90,8 +90,8 @@ export class PasskeyAlephiumProvider extends SignerProvider {
         attoAlphAmount: d.attoAlphAmount.toString()
       }))
     }, account.publicKey)
-    if ('transferTxs' in buildResult) {
-      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    if ('fundingTxs' in buildResult && buildResult.fundingTxs !== undefined) {
+      await this.signAndSubmitTransferTxs(account, buildResult.fundingTxs)
     }
     return await this._signAndSubmitTransferTx(account, buildResult)
   }
@@ -108,8 +108,8 @@ export class PasskeyAlephiumProvider extends SignerProvider {
       issueTokenTo: params.issueTokenTo,
       gasPrice: params.gasPrice?.toString(),
     }, account.publicKey)
-    if ('transferTxs' in buildResult) {
-      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    if ('fundingTxs' in buildResult && buildResult.fundingTxs !== undefined) {
+      await this.signAndSubmitTransferTxs(account, buildResult.fundingTxs)
     }
     const signatures = await sign(account, buildResult.txId)
     await this.nodeProvider.multisig.postMultisigSubmit({
@@ -119,7 +119,6 @@ export class PasskeyAlephiumProvider extends SignerProvider {
     return {
       ...buildResult,
       signature: signatures.join(''),
-      groupIndex: account.group,
       contractId: binToHex(contractIdFromAddress(buildResult.contractAddress))
     }
   }
@@ -135,8 +134,8 @@ export class PasskeyAlephiumProvider extends SignerProvider {
       gasPrice: params.gasPrice?.toString(),
       gasEstimationMultiplier: params.gasEstimationMultiplier
     }, account.publicKey)
-    if ('transferTxs' in buildResult) {
-      await this.signAndSubmitTransferTxs(account, buildResult.transferTxs)
+    if ('fundingTxs' in buildResult && buildResult.fundingTxs !== undefined) {
+      await this.signAndSubmitTransferTxs(account, buildResult.fundingTxs)
     }
     const signatures = await sign(account, buildResult.txId)
     await this.nodeProvider.multisig.postMultisigSubmit({
@@ -146,7 +145,6 @@ export class PasskeyAlephiumProvider extends SignerProvider {
     return {
       ...buildResult,
       signature: signatures.join(''),
-      groupIndex: account.group
     }
   }
 
@@ -310,8 +308,7 @@ export async function createPasskeyAccount(walletName: string) {
     address,
     publicKey: binToHex(publicKey),
     rawId: binToHex(new Uint8Array(credential.rawId)),
-    keyType: 'gl-webauthn',
-    group: defaultGroupOfGrouplessAddress(publicKey)
+    keyType: 'gl-webauthn'
   }
   storeWallet(walletName, account)
 }
